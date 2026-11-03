@@ -1,0 +1,25 @@
+name: Build and test
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y clang-18 lld-18 llvm-18 gcc make xxd unzip curl binutils
+      - name: Build and test with the pinned SDK
+        env:
+          LLVM_CONFIG: /usr/bin/llvm-config-18
+        run: bash tools/build-release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PadBridge-fw1360-experimental
+          path: |
+            dist/PadBridge-PS5-0.2.1-fw1360-experimental.elf
+            dist/PadBridge-PS5-0.2.1-fw1360-experimental.elf.sha256

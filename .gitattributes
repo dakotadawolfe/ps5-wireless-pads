@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.sh text eol=lf
+web/index.html text eol=lf
+*.elf binary
+*.png binary

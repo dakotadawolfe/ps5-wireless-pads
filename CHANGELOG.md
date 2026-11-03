@@ -5,6 +5,18 @@ version is set in `src/version.h` and is also in the first line of the log, in
 the start-up notification, on the web page, and in the binary
 (`strings PadBridge-PS5-*.elf | grep padbridge-version`).
 
+## 0.2.1-fw1360-experimental
+
+Experimental PS5 13.60 / Xbox Elite Series 2 candidate. No console testing yet.
+
+- Resolve the optional launcher export at runtime so its absence does not block startup.
+- Receive complete HCI events instead of one USB packet per queued transfer.
+- Track scan acknowledgements and bound retries without repeating confirmed scan enables.
+- Parse batched LE reports and combine recent connectable adverts with scan responses.
+- Default to LE-only discovery; allow Classic inquiry through configuration.
+- Add Elite Series 2 discovery/pairing/reconnection and failure regression tests.
+- Add a pinned SDK build, CI artifact and an investigation/test guide.
+
 ## 0.2.0-beta
 
 First release of the ps5-wireless-pads fork (based on PadBridge PS5 0.1.9-beta). Not yet tested on a console.

@@ -1301,7 +1301,7 @@ void host_poll(host_t *h, int timeout_ms)
     }
 
     /* Keep searching through the pairing window, one pad at a time. */
-    if (now < h->pair_until && !h->inquiring && !linking) start_inquiry(h);
+    if (h->classic_discovery && now < h->pair_until && !h->inquiring && !linking) start_inquiry(h);
     if (now >= h->pair_until && h->inquiring) {
         send_cmd(h, OP_INQUIRY_CANCEL, NULL, 0);
         h->inquiring = 0;
@@ -1513,6 +1513,7 @@ host_t *host_open(hci_t hci, const char *db_path, const host_events *ev)
 
     if (!h) return NULL;
     h->hci = hci;
+    h->classic_discovery = 1;
     if (ev) h->ev = *ev;
     snprintf(h->db_path, sizeof h->db_path, "%s", db_path);
     {
@@ -1527,6 +1528,16 @@ host_t *host_open(hci_t hci, const char *db_path, const host_events *ev)
         return NULL;
     }
     return h;
+}
+
+void host_set_classic_discovery(host_t *h, int enabled)
+{
+    if (h) h->classic_discovery = enabled != 0;
+}
+
+int host_le_available(const host_t *h)
+{
+    return h && h->le_ok;
 }
 
 void host_close(host_t *h)

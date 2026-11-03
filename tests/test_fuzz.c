@@ -1,6 +1,7 @@
 /* Malformed input: random and mutated bytes through every parser a pad
  * can reach. Run under the sanitizers (make fuzz) it must find nothing. */
 #include "../src/profiles.h"
+#include "../src/log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +31,9 @@ int main(void)
     long i;
     int p, accepted = 0;
 
+    /* Rejected inputs are expected. Keep sanitizer reports on stderr while
+     * avoiding hundreds of thousands of diagnostic writes to the terminal. */
+    log_open("/dev/null");
     for (i = 0; i < 200000; i++) {
         int n = (int)(rnd() % sizeof buf) + 1, k;
         pad_state st;
@@ -63,5 +67,6 @@ int main(void)
         sdp_find_ids(buf, n, &vid, &pid);
     }
     printf("fuzz: 200000 inputs, %d descriptors accepted, no fault\n", accepted);
+    log_close();
     return 0;
 }

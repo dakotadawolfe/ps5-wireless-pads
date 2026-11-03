@@ -34,6 +34,7 @@
  * Pairing: the menu's button, or create /data/padbridge/pair.
  */
 #include "hci_usb.h"
+#include "config.h"
 #include "i18n.h"
 #include "instance.h"
 #include "host.h"
@@ -92,6 +93,7 @@ static char g_bt_reason[200];
 static const char *g_bt_reason_key = "";       /* the same, as a key the page translates */
 
 static host_t *g_host;                  /* NULL until Bluetooth is up */
+static padbridge_config g_config;
 static web_t *g_web;
 static int g_vpad_ok;                   /* virtual pads are possible */
 static int g_bt_attempt;                /* Bluetooth tries made in this round */
@@ -229,6 +231,18 @@ static void bt_try(long now)
     if (hci_usb_open(&hci)) {
         g_host = host_open(hci, DB_PATH, &ev);
         if (g_host) {
+            host_set_classic_discovery(g_host, g_config.classic_discovery);
+            log_line("pairing discovery: %s", g_config.classic_discovery ? "Classic + LE" : "LE only");
+            if (!g_config.classic_discovery && !host_le_available(g_host)) {
+                host_close(g_host);
+                g_host = NULL;
+                g_bt_state = WEB_BT_FAILED;
+                snprintf(g_bt_reason, sizeof g_bt_reason,
+                         "Bluetooth LE setup failed. See the log for the rejected command.");
+                g_bt_reason_key = "";
+                log_line("Bluetooth LE setup failed; waiting for an explicit retry");
+                return;
+            }
             g_bt_state = WEB_BT_OK;
             log_line("Bluetooth ready after %d tr%s%s", attempt, attempt == 1 ? "y" : "ies",
                      g_bt_plain_creds ? ", answering only with the original credentials" : "");
@@ -348,6 +362,8 @@ int main(void)
 
     mkdir(STATE_DIR, 0755);
     log_open(LOG_PATH);
+    config_defaults(&g_config);
+    config_load(&g_config, CONFIG_PATH);
     log_line("PadBridge PS5 %s - developed by %s", PADBRIDGE_VERSION, PADBRIDGE_AUTHOR);
     i18n_load(LANG_PATH);
     log_line("language: %s", i18n_code(i18n_get()));

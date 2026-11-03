@@ -249,6 +249,15 @@ struct host {
     long t_scan;
     int le_scan_out;                /* scan enable commands not answered yet */
     int le_scan_last;               /* the last value sent */
+    int le_scan_uncertain;          /* a lost reply needs a bounded retry */
+    int le_scan_status;             /* last confirmed status, -1 before a reply */
+    long le_scan_started, le_diag_next;
+    unsigned le_adverts;
+    struct {
+        uint8_t addr[6], type, data[62];
+        int used, len;
+        long seen;
+    } le_adv_cache[8];              /* ADV_IND plus its separate SCAN_RSP */
     struct { unsigned char addr[6]; long until; } le_hold[4];  /* no attempt before */
     int le_hold_next;
     long le_diag_t;                 /* diagnostics rate limit */
@@ -258,6 +267,7 @@ struct host {
     long pair_until;
     long purge_at;                  /* when stale links were last cleared */
     int inquiring;
+    int classic_discovery;
     int dead;               /* the transport is gone */
     int diag_done;          /* the transport's self-report was logged */
     int scan_orig, scan_set; /* page scan as found, and as we set it (-1: untouched) */

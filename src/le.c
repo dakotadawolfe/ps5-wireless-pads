@@ -181,6 +181,15 @@ void le_setup(host_t *h)
     /* Active scanning (names come in scan responses), 60 ms every 60 ms. */
     static const uint8_t scan[7] = { 0x01, 0x60, 0x00, 0x60, 0x00, 0x00, 0x00 };
 
+    h->le_scan_status = -1;
+    /* Capability evidence matters on the two-function Sony controller: an
+     * accepted event-mask command alone does not prove a working LE radio. */
+    if (hci_sync(h, 0x1003, NULL, 0) && h->cc_len >= 14)
+        log_line("le: local features LE=%d simultaneous=%d",
+                 !!(h->cc[10] & 0x40), !!(h->cc[12] & 0x02));
+    if (hci_sync(h, 0x0C6C, NULL, 0) && h->cc_len >= 8)
+        log_line("le: host support=%u (read only)", h->cc[6]);
+
     if (!hci_sync(h, OP_LE_SET_EVENT_MASK, mask, 8)) {
         log_line("le: the controller does not do LE");
         h->le_ok = 0;
@@ -194,7 +203,12 @@ void le_setup(host_t *h)
         h->lep.credits = h->lep.max = h->cc[8];
         log_line("le: %d LE buffers of %u bytes", h->lep.max, h->le_mtu);
     }
-    hci_sync(h, OP_LE_SET_SCAN_PARAMS, scan, 7);
+    if (!hci_sync(h, OP_LE_SET_SCAN_PARAMS, scan, 7)) {
+        log_line("le: scan parameters failed; LE discovery disabled (status %d)",
+                 h->cc_op == OP_LE_SET_SCAN_PARAMS && h->cc_len > 5 ? h->cc[5] : -1);
+        h->le_ok = 0;
+        return;
+    }
     /* Answered by an LE event; without it, pairing falls back to legacy. */
     send_cmd(h, OP_LE_READ_LOCAL_P256, NULL, 0);
 }
@@ -204,7 +218,7 @@ void le_shutdown(host_t *h)
 {
     static const uint8_t off[2] = { 0, 0 };
 
-    if (h->le_ok && h->le_scanning) {
+    if (h->le_ok && (h->le_scanning || h->le_scan_uncertain || h->le_scan_out)) {
         hci_sync(h, OP_LE_SET_SCAN_ENABLE, off, 2);
         h->le_scanning = 0;
     }
@@ -335,7 +349,8 @@ static void le_scan_off(host_t *h, link_t *l, long now)
 
     if (send_cmd(h, OP_LE_SET_SCAN_ENABLE, off, 2)) h->le_scan_out++;
     h->le_scan_last = 0;
-    h->le_scanning = 0;
+    h->le_scan_uncertain = 1;
+    h->t_scan = now;
     l->le_s.cstate = LC_SCAN_OFF;
     l->le_s.st_scan = l->le_s.st_create = l->le_s.st_cancel = -1;
     l->le_s.cancel_done = l->le_s.saw02 = 0;
@@ -424,7 +439,17 @@ void le_on_cmd_complete(host_t *h, unsigned op, int status)
     long now = now_ms();
 
     if (op == OP_LE_SET_SCAN_ENABLE) {
-        if (h->le_scan_out > 0) h->le_scan_out--;
+        if (h->le_scan_out > 0) {
+            h->le_scan_out--;
+            h->le_scan_status = status;
+            if (status == 0) {
+                h->le_scanning = h->le_scan_last;
+                h->le_scan_uncertain = 0;
+            } else {
+                /* In particular, 0x0c does not mean scanning is enabled. */
+                h->le_scan_uncertain = 1;
+            }
+        }
         l = le_connecting(h);
         if (l && l->le_s.cstate == LC_SCAN_OFF) {
             l->le_s.st_scan = status;
@@ -518,7 +543,10 @@ static void on_advert(host_t *h, const uint8_t *r, int n)
     uint8_t evtype, type, dlen;
     const uint8_t *addr, *data;
     db_rec *bond;
-    int i;
+    int i, cached = -1;
+    long now = now_ms();
+    uint8_t joined[62];
+    int data_len;
 
     if (n < 10) return;
     evtype = r[0];
@@ -526,7 +554,43 @@ static void on_advert(host_t *h, const uint8_t *r, int n)
     addr = r + 2;
     dlen = r[8];
     data = r + 9;
-    if (9 + dlen > n || evtype > 1) return;     /* connectable adverts only */
+    if (10 + dlen > n || dlen > 31 || type > 1) return;
+    h->le_adverts++;
+    /* Drop padding before concatenating AD and scan-response fields. */
+    for (i = 0; i < dlen && data[i]; i += 1 + data[i])
+        if (1 + data[i] > dlen - i) return;
+    dlen = (uint8_t)i;
+    /* A name and the HID UUID can be split across ADV_IND and SCAN_RSP.
+     * Only accept a response after a recent connectable advertisement from
+     * the same address AND address type. Never connect to a response alone. */
+    for (i = 0; i < 8; i++) {
+        if (h->le_adv_cache[i].used && now - h->le_adv_cache[i].seen > 5000)
+            h->le_adv_cache[i].used = 0;
+        if (h->le_adv_cache[i].used && h->le_adv_cache[i].type == type &&
+            memcmp(h->le_adv_cache[i].addr, addr, 6) == 0) cached = i;
+    }
+    data_len = dlen;
+    if (evtype <= 1) {
+        if (cached < 0) {
+            cached = 0;
+            for (i = 0; i < 8; i++) {
+                if (!h->le_adv_cache[i].used) { cached = i; break; }
+                if (h->le_adv_cache[i].seen < h->le_adv_cache[cached].seen) cached = i;
+            }
+        }
+        h->le_adv_cache[cached].used = 1;
+        h->le_adv_cache[cached].type = type;
+        memcpy(h->le_adv_cache[cached].addr, addr, 6);
+        memcpy(h->le_adv_cache[cached].data, data, dlen);
+        h->le_adv_cache[cached].len = dlen;
+        h->le_adv_cache[cached].seen = now;
+    } else if (evtype == 4 && cached >= 0) {
+        int first = h->le_adv_cache[cached].len;
+        memcpy(joined, h->le_adv_cache[cached].data, (size_t)first);
+        memcpy(joined + first, data, dlen);
+        data = joined;
+        data_len += first;
+    } else return;
     if (link_by_addr(h, addr) || le_held(h, addr, now_ms())) return;
     for (i = 0; i < HOST_MAX_PADS; i++)         /* one connection attempt at a time */
         if (h->links[i].used && h->links[i].le && !h->links[i].connected) return;
@@ -537,7 +601,7 @@ static void on_advert(host_t *h, const uint8_t *r, int n)
             if (h->links[i].used && h->links[i].le &&
                 memcmp(link_id_addr(&h->links[i]), bond->addr, 6) == 0) return;
         le_connect(h, type, addr, bond);
-    } else if (now_ms() < h->pair_until && looks_like_gamepad(data, dlen)) {
+    } else if (now_ms() < h->pair_until && looks_like_gamepad(data, data_len)) {
         log_line("found LE gamepad %s", addr_str(addr));
         le_connect(h, type, addr, NULL);
     }
@@ -561,13 +625,34 @@ void le_poll(host_t *h, long now)
     for (i = 0; i < HOST_MAX_PADS; i++)
         if (h->links[i].used && h->links[i].le && !h->links[i].connected) want = 0;
 
-    /* Sent again now and then: its reply may have gone astray. */
-    if (want != h->le_scanning || (want && now - h->t_scan > T_SCAN_REFRESH)) {
+    if (want && !h->le_scan_want) {
+        h->le_adverts = 0;
+        h->le_scan_started = now;
+        h->le_diag_next = now + 10000;
+    }
+    h->le_scan_want = want;
+    if (want && now >= h->le_diag_next) {
+        log_line("le: %u advertisements in %ld ms; scan confirmed=%d status=%d pending=%d",
+                 h->le_adverts, now - h->le_scan_started, h->le_scanning,
+                 h->le_scan_status, h->le_scan_out);
+        if (!h->le_adverts && h->hci.ops->diag) h->hci.ops->diag(h->hci.ctx);
+        h->le_diag_next = now + 60000;
+    }
+    /* Do not re-enable an acknowledged active scan every five seconds.
+     * Those duplicate commands generate 0x0c on some controllers. Keep only
+     * one request outstanding; retries cover failure or a lost reply. */
+    if (h->le_scan_out) {
+        if (now - h->t_scan < T_SCAN_REFRESH) return;
+        h->le_scan_out = 0;
+        h->le_scan_uncertain = 1;
+    }
+    if ((want != h->le_scanning || h->le_scan_uncertain) &&
+        (!h->t_scan || now - h->t_scan >= T_SCAN_REFRESH || want != h->le_scan_last)) {
         p[0] = (uint8_t)want;
         p[1] = 0;
         if (send_cmd(h, OP_LE_SET_SCAN_ENABLE, p, 2)) h->le_scan_out++;
         h->le_scan_last = want;
-        h->le_scanning = want;
+        h->le_scan_uncertain = 1;
         h->t_scan = now;
     }
 }
@@ -578,6 +663,7 @@ void le_on_meta(host_t *h, const unsigned char *ev, int len)
 {
     link_t *l;
 
+    if (len < 1) return;
     switch (ev[0]) {
     case 0x01:  /* Connection Complete */
     case 0x0A:  /* Enhanced Connection Complete */
@@ -613,9 +699,17 @@ void le_on_meta(host_t *h, const unsigned char *ev, int len)
         l->le_s.cstate = LC_NONE;
         break;
 
-    case 0x02:  /* Advertising Report: one report per event, in practice */
-        if (len >= 3 && ev[1] >= 1) on_advert(h, ev + 2, len - 2);
+    case 0x02: { /* One event can contain several advertising reports. */
+        int pos = 2, i;
+        if (len < 2) break;
+        for (i = 0; i < ev[1] && pos + 10 <= len; i++) {
+            int size = 10 + ev[pos + 8];
+            if (size > len - pos) break;
+            on_advert(h, ev + pos, size);
+            pos += size;
+        }
         break;
+    }
 
     case 0x08:  /* Read Local P-256 Public Key Complete */
         if (len >= 66 && ev[1] == 0) {

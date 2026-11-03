@@ -71,6 +71,12 @@ src/icon_data.c: assets/icon0.png
 $(BUILD)/test_launcher: src/launcher.c src/icon_data.c tests/test_launcher.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
 
+$(BUILD)/test_apps: src/ps5_apps.c tests/test_apps.c | $(BUILD)
+	cc $(HOST_CFLAGS) -o $@ $^
+
+$(BUILD)/test_hci_usb: src/hci_usb.c src/usb_desc.c src/evstream.c src/log.c src/util.c tests/test_hci_usb.c | $(BUILD)
+	cc $(HOST_CFLAGS) -U_FORTIFY_SOURCE -Itests/usb_include -Dopen=mock_open -Dclose=mock_close -Dioctl=mock_ioctl -o $@ $^
+
 # Console notification texts in every language.
 $(BUILD)/test_i18n: src/i18n.c tests/test_i18n.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
@@ -79,7 +85,7 @@ $(BUILD)/test_i18n: src/i18n.c tests/test_i18n.c | $(BUILD)
 $(BUILD)/test_usb: src/usb_desc.c src/evstream.c tests/test_usb.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
 
-test: $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vpad $(BUILD)/test_crypto $(BUILD)/test_profiles $(BUILD)/test_host $(BUILD)/test_le $(BUILD)/test_web $(BUILD)/test_launcher $(BUILD)/test_i18n $(BUILD)/test_suspend
+test: $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vpad $(BUILD)/test_crypto $(BUILD)/test_profiles $(BUILD)/test_host $(BUILD)/test_le $(BUILD)/test_web $(BUILD)/test_launcher $(BUILD)/test_i18n $(BUILD)/test_suspend $(BUILD)/test_apps $(BUILD)/test_hci_usb
 	./$(BUILD)/test_usb
 	./$(BUILD)/test_lock
 	./$(BUILD)/test_config
@@ -92,16 +98,20 @@ test: $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vp
 	./$(BUILD)/test_launcher
 	./$(BUILD)/test_i18n
 	./$(BUILD)/test_suspend
+	./$(BUILD)/test_apps
+	./$(BUILD)/test_hci_usb
 
 # Malformed input through every parser, under the sanitizers.
 SAN := -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
 fuzz: | $(BUILD)
 	cc $(HOST_CFLAGS) $(SAN) -o $(BUILD)/test_fuzz $(CORE) tests/test_fuzz.c
 	./$(BUILD)/test_fuzz
+	cc $(HOST_CFLAGS) $(SAN) -o $(BUILD)/test_le_san $(CORE) tests/sim_le.c tests/test_le.c
+	./$(BUILD)/test_le_san
 
 # ---- the console payload ----------------------------------------------------
 
-ps5:
+ps5: src/web_page.c src/icon_data.c
 ifndef PS5_PAYLOAD_SDK
 	$(error PS5_PAYLOAD_SDK is undefined)
 endif

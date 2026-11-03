@@ -28,6 +28,12 @@ typedef struct {
     int foreign_pending;        /* someone else's LE connection attempt is pending */
     int foreign_restarts;       /* and is started again this many times once cancelled */
     unsigned seed;
+    int scan_enable_failures;   /* first N scan enables return Command Disallowed */
+    int scan_params_fail;       /* reject setup instead of pretending LE is ready */
+    int silent_radio;           /* accepts commands but never advertises */
+    int split_advert;           /* HID UUID in ADV_IND, name in SCAN_RSP */
+    int batched_advert;         /* unrelated report before the gamepad */
+    int drop_scan_reply;        /* lose first successful enable's Command Complete */
 } sim_le_pad;
 
 sim_le_t *sim_le_new(const sim_le_pad *pad);
@@ -49,6 +55,9 @@ int  sim_le_last_output(const sim_le_t *s, uint8_t *out, int max);
 int  sim_le_blob_reads(const sim_le_t *s);
 int  sim_le_creates(const sim_le_t *s);         /* LE Create Connection commands */
 int  sim_le_cancels(const sim_le_t *s);         /* LE Create Connection Cancel commands */
+int  sim_le_scan_enables(const sim_le_t *s);
+int  sim_le_inquiries(const sim_le_t *s);
+int  sim_le_scanning(const sim_le_t *s);
 const char *sim_le_error(const sim_le_t *s);    /* what the pad found wrong */
 
 #endif

@@ -53,6 +53,8 @@ struct sim_le {
     unsigned drop_state;
     const char *error;
     int ssp, scan;
+    int scan_enables, inquiries;
+    long t_inquiry;
 };
 
 static long g_clock = 5000;
@@ -592,8 +594,28 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
         r[3] = 6;
         cmd_complete(s, op, r, 4);
         break;
+    case 0x0401:
+        s->inquiries++;
+        cmd_status(s, op, 0);
+        s->t_inquiry = g_clock + 10000;
+        break;
+    case 0x200B:
+        r[0] = s->pad.scan_params_fail ? 0x0C : 0;
+        cmd_complete(s, op, r, 1);
+        break;
     case 0x200C:
+        if (p[0]) s->scan_enables++;
+        if (p[0] && s->pad.scan_enable_failures > 0) {
+            s->pad.scan_enable_failures--;
+            r[0] = 0x0C;
+            cmd_complete(s, op, r, 1);
+            break;
+        }
         s->scanning = p[0];
+        if (p[0] && s->pad.drop_scan_reply) {
+            s->pad.drop_scan_reply = 0;
+            break;
+        }
         r[0] = 0;
         cmd_complete(s, op, r, 1);
         break;
@@ -705,10 +727,16 @@ static int op_pump(void *ctx, int timeout_ms)
     sim_le_t *s = ctx;
 
     g_clock += timeout_ms > 0 ? timeout_ms : 1;
-    if (s->powered && s->scanning && !s->connected && g_clock - s->t_adv >= 30) {
+    if (s->t_inquiry && g_clock >= s->t_inquiry) {
+        const unsigned char ok = 0;
+        event(s, 0x01, &ok, 1);
+        s->t_inquiry = 0;
+    }
+    if (s->powered && s->scanning && !s->connected && !s->pad.silent_radio && g_clock - s->t_adv >= 30) {
         /* flags, appearance gamepad, 16-bit services: HID */
         static const uint8_t ad[] = { 0x02, 0x01, 0x06, 0x03, 0x19, 0xC4, 0x03, 0x03, 0x03, 0x12, 0x18 };
-        unsigned char r[48];
+        unsigned char r[100];
+        int n;
         r[0] = 0x02;
         r[1] = 1;
         r[2] = 0x00;                    /* ADV_IND */
@@ -717,7 +745,32 @@ static int op_pump(void *ctx, int timeout_ms)
         r[10] = sizeof ad;
         memcpy(r + 11, ad, sizeof ad);
         r[11 + sizeof ad] = 0xC0;       /* RSSI */
-        meta(s, r, 12 + (int)sizeof ad);
+        n = 12 + (int)sizeof ad;
+        if (s->pad.split_advert) {
+            /* No appearance/name: discovery needs the subsequent response. */
+            static const uint8_t hid[] = { 3, 3, 0x12, 0x18 };
+            static const uint8_t name[] = { 22, 9, 'X','b','o','x',' ','E','l','i','t','e',' ',
+                                          'C','o','n','t','r','o','l','l','e','r' };
+            r[10] = 31;
+            memset(r + 11, 0, 31);
+            memcpy(r + 11, hid, sizeof hid);
+            r[42] = 0xC0;
+            meta(s, r, 43);
+            r[2] = 4;
+            r[10] = sizeof name;
+            memcpy(r + 11, name, sizeof name);
+            r[11 + sizeof name] = 0xC0;
+            n = 12 + (int)sizeof name;
+        }
+        if (s->pad.batched_advert) {
+            memmove(r + 12, r + 2, (size_t)(n - 2));
+            memset(r + 2, 0, 10);
+            r[2] = 3;                  /* non-connectable, no data */
+            r[4] = 0xEE;               /* unrelated address */
+            r[1] = 2;
+            n += 10;
+        }
+        meta(s, r, n);
         s->t_adv = g_clock;
     }
     if (s->connected && s->encrypted && (s->cccd & 1) && g_clock - s->t_report >= 8) {
@@ -773,6 +826,9 @@ sim_le_t *sim_le_new(const sim_le_pad *pad)
 }
 
 void sim_le_free(sim_le_t *s) { free(s); }
+int sim_le_scan_enables(const sim_le_t *s) { return s->scan_enables; }
+int sim_le_inquiries(const sim_le_t *s) { return s->inquiries; }
+int sim_le_scanning(const sim_le_t *s) { return s->scanning; }
 
 hci_t sim_le_hci(sim_le_t *s)
 {

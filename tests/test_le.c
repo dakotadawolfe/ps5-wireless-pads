@@ -2,6 +2,7 @@
  * controller and pad. */
 #include "sim_le.h"
 #include "../src/host.h"
+#include "../src/host_int.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -396,8 +397,147 @@ static void test_stress(void)
     if (ok < runs) g_fail++;
 }
 
+static void test_elite_discovery(void)
+{
+    sim_le_pad pad;
+    sim_le_t *sim;
+    host_t *h;
+    seen s = { 0 };
+
+    printf("Elite Series 2: split and batched adverts, refused scan, pairing, input, reconnect\n");
+    unlink(DB);
+    xbox_pad(&pad, 1, 1);
+    pad.pid = 0x0B22;
+    pad.split_advert = pad.batched_advert = 1;
+    pad.scan_enable_failures = 1;
+    sim = sim_le_new(&pad);
+    h = open_host(sim, &s);
+    CHECK(h != NULL);
+    if (!h) { sim_le_free(sim); return; }
+    host_set_classic_discovery(h, 0);
+    host_pair(h, 30);
+    run(h, 1000);
+    CHECK(!h->le_scanning && h->le_scan_status == 0x0C);
+    run(h, 12000);
+    CHECK(sim_le_error(sim) == NULL);
+    CHECK(sim_le_paired(sim) && sim_le_encrypted(sim));
+    CHECK(s.connects == 1 && s.states > 0);
+    CHECK(s.info.pid == 0x0B22 && s.last.lx == 0xFF);
+    CHECK(s.last.buttons & PAD_CROSS);
+    CHECK(!(s.last.buttons & PAD_CREATE)); /* Elite has no Series Share button */
+    CHECK(sim_le_inquiries(sim) == 0);
+    sim_le_power_off(sim);
+    run(h, 100);
+    sim_le_power_on(sim);
+    run(h, 12000);
+    CHECK(s.connects == 2 && sim_le_pairings(sim) == 1);
+    host_close(h);
+    sim_le_free(sim);
+}
+
+static void test_scan_lifecycle(void)
+{
+    sim_le_pad pad;
+    sim_le_t *sim;
+    host_t *h;
+    seen s;
+    int lost;
+
+    printf("LE scan: no duplicate enables after acknowledgement; retry lost reply; stop cleans up\n");
+    for (lost = 0; lost <= 1; lost++) {
+        unlink(DB);
+        memset(&s, 0, sizeof s);
+        xbox_pad(&pad, 1, 0);
+        pad.silent_radio = 1;
+        pad.drop_scan_reply = lost;
+        sim = sim_le_new(&pad);
+        h = open_host(sim, &s);
+        CHECK(h != NULL);
+        if (!h) { sim_le_free(sim); continue; }
+        host_set_classic_discovery(h, 0);
+        host_pair(h, 30);
+        run(h, 16000);
+        CHECK(h->le_scanning && h->le_adverts == 0 && s.connects == 0);
+        CHECK(sim_le_scan_enables(sim) == 1 + lost);
+        host_close(h);
+        CHECK(!sim_le_scanning(sim));
+        sim_le_free(sim);
+    }
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    xbox_pad(&pad, 1, 0);
+    pad.scan_params_fail = 1;
+    sim = sim_le_new(&pad);
+    h = open_host(sim, &s);
+    CHECK(h != NULL);
+    if (h) {
+        CHECK(!h->le_ok);
+        host_pair(h, 30);
+        run(h, 6000);
+        CHECK(sim_le_scan_enables(sim) == 0 && s.connects == 0);
+        host_close(h);
+    }
+    sim_le_free(sim);
+}
+
+static void test_advert_validation(void)
+{
+    sim_le_pad pad;
+    sim_le_t *sim;
+    host_t *h;
+    seen s = { 0 };
+    uint8_t adv[16] = { 2, 1, 0, 0 };
+    uint8_t rsp[21] = { 2, 1, 4, 0 };
+    static const uint8_t hid[] = { 3, 3, 0x12, 0x18 };
+    static const uint8_t name[] = { 8, 9, 'G','a','m','e','p','a','d' };
+
+    printf("LE discovery rejects orphan, stale, wrong-type and truncated responses\n");
+    unlink(DB);
+    xbox_pad(&pad, 1, 0);
+    pad.silent_radio = 1;
+    sim = sim_le_new(&pad);
+    h = open_host(sim, &s);
+    CHECK(h != NULL);
+    if (!h) { sim_le_free(sim); return; }
+    host_set_classic_discovery(h, 0);
+    host_pair(h, 30);
+    run(h, 100);
+    memcpy(adv + 4, pad.addr, 6);
+    memcpy(rsp + 4, pad.addr, 6);
+    adv[10] = sizeof hid;
+    rsp[10] = sizeof name;
+    memcpy(adv + 11, hid, sizeof hid);
+    memcpy(rsp + 11, name, sizeof name);
+    sim_le_inject_event(sim, 0x3E, rsp, sizeof rsp); /* no prior connectable ADV */
+    run(h, 100);
+    CHECK(sim_le_creates(sim) == 0);
+    sim_le_inject_event(sim, 0x3E, adv, sizeof adv);
+    rsp[3] = 1;                                  /* wrong address type */
+    sim_le_inject_event(sim, 0x3E, rsp, sizeof rsp);
+    run(h, 100);
+    CHECK(sim_le_creates(sim) == 0);
+    run(h, 5100);
+    rsp[3] = 0;
+    sim_le_inject_event(sim, 0x3E, rsp, sizeof rsp); /* expired cache */
+    run(h, 100);
+    CHECK(sim_le_creates(sim) == 0);
+    sim_le_inject_event(sim, 0x3E, adv, sizeof adv - 1); /* missing RSSI */
+    sim_le_inject_event(sim, 0x3E, rsp, sizeof rsp);
+    run(h, 100);
+    CHECK(sim_le_creates(sim) == 0);
+    sim_le_inject_event(sim, 0x3E, adv, sizeof adv);
+    sim_le_inject_event(sim, 0x3E, rsp, sizeof rsp);
+    run(h, 8000);
+    CHECK(s.connects == 1 && s.states > 0);
+    host_close(h);
+    sim_le_free(sim);
+}
+
 int main(void)
 {
+    test_elite_discovery();
+    test_scan_lifecycle();
+    test_advert_validation();
     test_xbox_sc();
     test_reconnect_rpa();
     test_generic_legacy();

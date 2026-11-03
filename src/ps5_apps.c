@@ -2,6 +2,7 @@
 #include "launcher.h"
 #include "log.h"
 
+#include <dlfcn.h>
 #include <stddef.h>
 #include <sys/stat.h>
 
@@ -10,13 +11,22 @@ extern const unsigned int icon_png_data_len;
 
 int sceAppInstUtilInitialize(void);
 int sceAppInstUtilTerminate(void);
-int sceAppInstUtilAppInstallTitleDir(const char *title_id, const char *dir, void *reserved);
+typedef int (*install_title_dir_fn)(const char *, const char *, void *);
 int sceAppInstUtilAppUnInstall(const char *title_id);
 
 int apps_install_launcher(void)
 {
     struct stat st;
     int w, r;
+    install_title_dir_fn install = (install_title_dir_fn)dlsym(RTLD_DEFAULT,
+                                        "sceAppInstUtilAppInstallTitleDir");
+
+    /* This optional export is absent on 13.60. A direct ELF import prevents
+     * main() from running at all, even when the launcher is disabled. */
+    if (!install) {
+        log_line("launcher: install export unavailable; use http://<ps5-ip>:8095/");
+        return -1;
+    }
 
     w = launcher_write(LAUNCHER_APP_ROOT, icon_png_data, icon_png_data_len);
     if (w < 0) {
@@ -31,7 +41,7 @@ int apps_install_launcher(void)
         log_line("launcher: sceAppInstUtilInitialize -> %#x", (unsigned)r);
         return -1;
     }
-    r = sceAppInstUtilAppInstallTitleDir(LAUNCHER_TITLE_ID, LAUNCHER_APP_ROOT "/", 0);
+    r = install(LAUNCHER_TITLE_ID, LAUNCHER_APP_ROOT "/", 0);
     sceAppInstUtilTerminate();
     log_line("launcher: installed %s in the media row -> %#x", LAUNCHER_TITLE_ID, (unsigned)r);
     return r == 0 ? 0 : -1;

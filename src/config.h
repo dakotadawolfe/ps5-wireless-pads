@@ -17,6 +17,7 @@
 typedef struct {
     uint32_t menu_combo;
     int menu_hold_ms;
+    int classic_discovery;          /* 0: LE-only pairing, 1: also Classic inquiry */
 } padbridge_config;
 
 void config_defaults(padbridge_config *c);

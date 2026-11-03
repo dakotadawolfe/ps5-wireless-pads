@@ -18,6 +18,7 @@ static void test_config(void)
 
     printf("config: defaults, parsing, bad lines\n");
     config_defaults(&c);
+    CHECK(c.classic_discovery == 0);
     CHECK(c.menu_combo == (PAD_OPTIONS | PAD_L2 | PAD_R2) && c.menu_hold_ms == 1500);
     config_combo_text(c.menu_combo, text, sizeof text);
     CHECK(strcmp(text, "L2 + R2 + OPTIONS") == 0);
@@ -32,12 +33,13 @@ static void test_config(void)
 
     CHECK(config_load(&c, "build/no_such_config.ini") == 0);        /* missing: fine */
     f = fopen("build/test_config.ini", "w");
-    fputs("# comment\nmenu_combo = l2+r2+triangle\nmenu_hold_ms = 2000\n"
+    fputs("# comment\nclassic_discovery=1\nmenu_combo = l2+r2+triangle\nmenu_hold_ms = 2000\n"
           "menu_hold_ms = 99\nmenu_combo = l1\nnonsense\nunknown_key = 1\n", f);
     fclose(f);
     CHECK(config_load(&c, "build/test_config.ini") == 4);
     CHECK(c.menu_combo == (PAD_L2 | PAD_R2 | PAD_TRIANGLE));        /* the bad later ones did not win */
     CHECK(c.menu_hold_ms == 2000);
+    CHECK(c.classic_discovery == 1);
 }
 
 static void test_hotkey(void)

@@ -2,6 +2,51 @@
 
 <h1 align="center">ps5-wireless-pads</h1>
 
+## PS5 13.60 / Xbox Elite Series 2 experimental fork
+
+This fork contains fixes for payload startup and Bluetooth LE discovery, aimed at
+the Xbox Elite Series 2 on PS5 firmware 13.60. **It has not been tested on a PS5.**
+Passing host simulations and building an ELF do not confirm that the console's
+radio can discover, pair, or deliver input from a real controller.
+
+Download **PadBridge-PS5-0.2.1-fw1360-experimental.elf** from
+[this fork's releases](https://github.com/dakotadawolfe/ps5-wireless-pads/releases).
+Read the [investigation and test procedure](docs/FW1360.md) before testing.
+
+- Removes the mandatory launcher import missing on 13.60. Use the web menu at
+  `http://<ps5-ip>:8095/`; the media-row icon may be unavailable.
+- Requests whole HCI events instead of 16-byte USB packets, reducing the chance
+  of losing portions of advertisements or pairing replies to another reader.
+- Tracks scan acknowledgements, handles refusal/lost replies, and stops sending
+  duplicate enable commands after a successful acknowledgement.
+- Handles multiple advertisements in one event and combines a connectable
+  advertisement with its scan response, including padded advertising data.
+- Uses LE-only discovery by default. For an Elite with older Classic Bluetooth
+  firmware, set `classic_discovery=1` in `/data/padbridge/config.ini` before launch.
+- Logs scan status, advertisement counts, and USB diagnostics when no reports arrive.
+
+The Elite Series 2 profile already exists upstream (`045e:0b22` over BLE). This
+release does not add independent paddle mapping or claim paddle behavior tested.
+The controller's own saved button mappings are the intended starting point.
+
+### Build this fork
+
+On Ubuntu 24.04 / WSL, install GCC, make, clang-18, lld-18, llvm-18, xxd, curl,
+unzip and binutils, then run:
+
+```sh
+LLVM_CONFIG=/usr/bin/llvm-config-18 bash tools/build-release.sh
+```
+
+The script caches SDK v0.45 under `~/.cache/ps5-wireless-pads` (override with
+`PADBRIDGE_SDK_CACHE`, using a path without spaces). It downloads from the official release, checks its pinned
+SHA-256, runs the host tests and sanitizer fuzz test, builds the ELF, and checks
+that the missing launcher symbol is not an unresolved import. GitHub Actions
+builds the same commit using the same script. No local firmware dumps are needed.
+
+The following sections retain upstream background. Their controller testing
+claims refer to upstream's older firmware, not this fork or PS5 13.60.
+
 <p align="center">
   <b>Use Xbox, Switch Pro, DualShock 4 and generic Bluetooth controllers on a jailbroken PS5.</b><br>
   <sub>No dongle. No adapter. Just the console's own Bluetooth chip.</sub>

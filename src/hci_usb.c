@@ -25,7 +25,7 @@
 #define EP_EVENTS_DEFAULT   0x82
 #define EP_ACL_IN_DEFAULT   0x81
 #define EP_ACL_OUT_DEFAULT  0x01
-#define MPS_EVENTS_DEFAULT  16
+#define EVENT_READ_SIZE     260
 
 /* Reads kept pending to win packets from the system's driver. The kernel
  * caps the transfers one process may have open (around 65), so events get
@@ -63,7 +63,7 @@ typedef struct {
     int out_idx;                    /* the OUT transfer in use: X_ACL_OUT or X_ACL_OUT2 */
     int out2_open;
     int out_done_logged;
-    int ev_read_len;                /* one packet of the events endpoint */
+    int ev_read_len;                /* a complete HCI event, not USB wMaxPacketSize */
     int n_functions;                /* how many the chip has, for the log */
     evstream es;
 
@@ -352,6 +352,8 @@ static void op_diag(void *ctx)
         log_line("diag: the device descriptor could not be read");
     log_line("diag: %u reads finished (%u empty or failed); %u events and %u ACL packets seen",
              c->reads_done, c->reads_empty, c->events_seen, c->acl_seen);
+    log_line("diag: event read size %d, partial event bytes %d, expired fragments %u",
+             c->ev_read_len, c->es.len, c->es.dropped);
     if (c->reads_done) {
         for (k = 0; k < c->first_len && k < 16; k++) snprintf(hex + 3 * k, 4, "%02x ", c->first_bytes[k]);
         if (c->first_len <= 0) hex[0] = '\0';
@@ -442,7 +444,10 @@ static void choose_endpoints(usb_ctx *c)
         c->ep_acl_out = f[0].ep_acl_out;
         for (i = 0; i < f[0].n_other; i++)
             if (!(f[0].other[i] & 0x80)) { c->ep_acl_out2 = f[0].other[i]; break; }
-        c->ev_read_len = f[0].mps_events >= 8 && f[0].mps_events <= 64 ? f[0].mps_events : MPS_EVENTS_DEFAULT;
+        /* Let USB finish the entire short-terminated HCI event. Reading only
+         * wMaxPacketSize splits advertisements/P-256 replies among competing
+         * readers. Linux btusb uses HCI_MAX_EVENT_SIZE for the same reason. */
+        c->ev_read_len = EVENT_READ_SIZE;
         return;
     }
     log_line("usb: no HCI function found in the descriptor; using the default layout");
@@ -450,7 +455,7 @@ static void choose_endpoints(usb_ctx *c)
     c->ep_events = EP_EVENTS_DEFAULT;
     c->ep_acl_in = EP_ACL_IN_DEFAULT;
     c->ep_acl_out = EP_ACL_OUT_DEFAULT;
-    c->ev_read_len = MPS_EVENTS_DEFAULT;
+    c->ev_read_len = EVENT_READ_SIZE;
 }
 
 static const hci_ops k_usb_ops = {

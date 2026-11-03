@@ -9,3 +9,10 @@ AngelLopezTorres in October 2026: the payload pauses in rest mode and
 resumes after waking instead of exiting, and a newly loaded copy takes over
 from a running instance instead of refusing to start. Rest-mode and takeover
 patterns follow ShadowMountPlus by drakmor (GPL-3.0).
+
+Modified by dakotadawolfe in November 2026 for experimental PS5 13.60 / Xbox
+Elite Series 2 work: optional launcher import, whole-event USB reads, LE scan
+acknowledgements, batched advertisements and scan responses, diagnostics and
+regression tests. Nicolas8aa identified the missing launcher import in issue #3
+and supplied a runtime lookup fix in commit 2bccc2e. See docs/FW1360.md for the
+evidence and unverified hardware behavior.

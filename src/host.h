@@ -41,6 +41,8 @@ host_t *host_open(hci_t hci, const char *db_path, const host_events *ev);
 void    host_close(host_t *h);
 
 void host_poll(host_t *h, int timeout_ms);
+void host_set_classic_discovery(host_t *h, int enabled);
+int host_le_available(const host_t *h);
 
 /* Searches for pads in pairing mode for `seconds`. */
 int  host_pair(host_t *h, int seconds);

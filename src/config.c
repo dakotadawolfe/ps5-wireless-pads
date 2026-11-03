@@ -22,6 +22,7 @@ void config_defaults(padbridge_config *c)
 {
     c->menu_combo = PAD_OPTIONS | PAD_L2 | PAD_R2;
     c->menu_hold_ms = 1500;
+    c->classic_discovery = 0;
 }
 
 int config_parse_combo(const char *text, uint32_t *mask)
@@ -92,7 +93,11 @@ int config_load(padbridge_config *c, const char *path)
         *eq = '\0';
         val = trim(eq + 1);
         key = trim(key);
-        if (strcmp(key, "menu_combo") == 0) {
+        if (strcmp(key, "classic_discovery") == 0 &&
+            (strcmp(val, "0") == 0 || strcmp(val, "1") == 0)) {
+            c->classic_discovery = val[0] == '1';
+            continue;
+        } else if (strcmp(key, "menu_combo") == 0) {
             uint32_t m;
             if (config_parse_combo(val, &m)) {
                 c->menu_combo = m;
